@@ -1,0 +1,26 @@
+---
+title: "linear and spline methods"
+author: "Meilin Yan"
+date: "June 10, 2016"
+output: pdf_document
+---
+
+```{r global_options, include=FALSE}
+ knitr::opts_chunk$set(cache = TRUE)
+```
+
+PACKAGEA AND READ DATA SET
+```{r}
+library(dlnm)
+library(ggplot2)
+library(ggthemes)
+library(lubridate)
+bj <- read.csv("0812bj.csv")
+bj$date <- as.Date(bj$date)
+bj$year <- year(bj$date)
+bj$month <- month(bj$date)
+bj$month <- as.factor(bj$month)
+bj$tot <- bj$A00toR99
+bj$cir <- bj$I00toI99
+bj$resp <- bj$J00toJ99
+```
