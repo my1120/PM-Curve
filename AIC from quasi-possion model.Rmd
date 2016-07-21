@@ -70,10 +70,10 @@ loglik.quasi
 ## Get number of parameters from the two models
 The dispersion parameter, which was forced to be 1 in a possion model, is allowed to be estimated in a quasi-possion model. And the dispersion parameter tells us how many times larger the variance is than the mean. 
 
-+ In a possion model,
-number of parameters = number of coefficients.
-+ In a quasi-possion model,
-number of parameters = (number of coefficients)*(dispersion parameter).
+* In a possion model,
+     + number of parameters = number of coefficients.
+* In a quasi-possion model,
+     + number of parameters = (number of coefficients)*(dispersion parameter).
 
 ```{r}
 # Possion model
@@ -85,8 +85,10 @@ summary(mod.posi.6)$dispersion
 # Quasi-Possion model
 # number of coefficients
 n.coef.quasi <- summary(mod.quasi.6)$df[3]
+n.coef.quasi
 # dispersion parameters
 n.disper.quasi <- summary(mod.quasi.6)$dispersion
+n.disper.quasi
 # number of parameters
 n.coef.quasi*n.disper.quasi
 ```
@@ -100,9 +102,11 @@ AIC(mod.posi.6, mod.posi.7, mod.posi.8) # model with 7 df per year has the small
 
 # AIC calculated with fqaic function
 c(fqaic(mod.posi.6), fqaic(mod.posi.7), fqaic(mod.posi.8)) # model with 7 df per year has the smallest AIC
+```
 
-# Same results but the values of AIC vary a little. I guess R calculates AIC by using a more accurate or complex formula. I am going to figure it out.
+Same results but the values of AIC vary a little. I guess R calculates AIC by using a more accurate or complex formula. I am going to figure it out.
 
+```{r}
 # Quasi-possion model
 AIC(mod.quasi.6, mod.quasi.7, mod.quasi.8)  # Not avaiable from R
 
