@@ -161,7 +161,7 @@ pred <- function(cb = c(), model = c(), at = c()) {
 
 ## Two types of Analyses
 
-1. **Knots at 75 and 150**
+**1. Knots at 75 and 150**
 
 * Knots
 
@@ -445,6 +445,90 @@ rug(bj.warm$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
 dev.off()
 ```
 
-2. **Knots at the cutoff values in the subset method**
+**2. Knots at the cutoff values in the subset method**
 
+Here I encounter a problem, the plots are pretty similar by runing the following code. 
 
+We can not define "df" and "knots" simultaneously in the crossbasis function. I am going to figure out how to do this part suggested by Tiantian.
+
+* Total death
+
+```{r eval=FALSE}
+# Crossbasis
+a.25 <- cb.spl(bj, knots = 25)
+a.50 <- cb.spl(bj, knots = 50)
+a.75 <- cb.spl(bj, knots = 75)
+a.100 <- cb.spl(bj, knots = 100)
+a.125 <- cb.spl(bj, knots = 125)
+a.150 <- cb.spl(bj, knots = 150)
+
+# Model
+a.m.25 <- mod(bj, "tot", a.25, 6)
+a.m.50 <- mod(bj, "tot", a.50, 6)
+a.m.75 <- mod(bj, "tot", a.75, 6)
+a.m.100 <- mod(bj, "tot", a.100, 6)
+a.m.125 <- mod(bj, "tot", a.125, 6)
+a.m.150 <- mod(bj, "tot", a.150, 6)
+
+# Predict
+a.p.25 <- pred(a.25, a.m.25, at = 0:a.pat)
+a.p.50 <- pred(a.50, a.m.50, at = 0:a.pat)
+a.p.75 <- pred(a.75, a.m.75, at = 0:a.pat)
+a.p.100 <- pred(a.100, a.m.100, at = 0:a.pat)
+a.p.125 <- pred(a.125, a.m.125, at = 0:a.pat)
+a.p.150 <- pred(a.150, a.m.150, at = 0:a.pat)
+```
+  
+Plot
+```{r eval=FALSE}
+pdf("Plots/tot_knots_at_cutoff.pdf", width = 6, height = 10)
+par(mfrow = c(3, 2))
+plot(a.p.25, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Knot = 25", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.p.50, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Knot = 50", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.p.75, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Knot = 75", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.p.100, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Knot = 100", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.p.125, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Knot = 125", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.p.150, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Knot = 150", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+dev.off()
+```
