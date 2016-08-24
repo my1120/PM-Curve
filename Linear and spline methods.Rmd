@@ -9,7 +9,7 @@ output: pdf_document
  knitr::opts_chunk$set(cache = TRUE)
 ```
 
-# Packages Loading
+## Packages Loading
 ```{r message=FALSE, warning=FALSE}
 library(dlnm)
 library(splines)
@@ -18,9 +18,10 @@ library(ggthemes)
 library(lubridate)
 ```
 
-# Data prep
-```{r}
+## Data prep
+```{r include=FALSE}
 bj <- read.csv("0812bj.csv")
+# 
 bj$date <- as.Date(bj$date)
 bj$year <- year(bj$date)
 bj$month <- month(bj$date)
