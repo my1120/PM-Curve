@@ -19,9 +19,8 @@ library(lubridate)
 ```
 
 ## Data prep
-```{r include=FALSE}
+```{r echo=FALSE}
 bj <- read.csv("0812bj.csv")
-# 
 bj$date <- as.Date(bj$date)
 bj$year <- year(bj$date)
 bj$month <- month(bj$date)
@@ -34,7 +33,7 @@ bj$resp <- bj$J00toJ99
 ## Holidays
 Set up holiday variable.
 
-```{r include = FALSE}
+```{r echo=FALSE}
 holi <- read.csv("beijing_date_holiday.csv")
 holi$date <- as.Date(holi$date)
 holiday1 <- holi$date[holi$Holiday == 1]
@@ -59,8 +58,13 @@ bj$holiday <- ifelse(bj$date %in% holiday, 1, 0)
 bj$holiday <- factor(bj$holiday, levels = c(1, 0))
 ```
 
-## Prediction and imputation
+## Exclude days of 2008
 ```{r}
+bj <- subset(bj, year != 2008)
+```
+
+## Prediction and imputation
+```{r echo=FALSE}
 # Observed PM from Beijing (Non-embassy) monitor
 bj$pm_bj <- bj$pm25hdbl
 
@@ -71,15 +75,15 @@ bj$pm_us <- bj$pm25ussg
 mod_bj <- lm(pm_bj ~ pm_us, na.action = na.exclude, data = bj)
 bj$pre_bj <- predict(mod_bj, newdata = bj)
 bj$pm_bj <- ifelse(is.na(bj$pm_bj), bj$pre_bj, bj$pm_bj)
-# After replacing NA with predicted values, it has only 15 NA.
-# The observed data from non-Embassy monitor has 156 NA.
+# After replacing NA with predicted values, it has only 5 NA.
+# The observed data from non-Embassy monitor has 142 NA.
 
 # predict pm_us with pm_bj
 mod_us <- lm(pm_us ~ pm_bj, data = bj)
 bj$pre_us <- predict(mod_us, newdata = bj)
 bj$pm_us <- ifelse(is.na(bj$pm_us), bj$pre_us, bj$pm_us)
-# After replacing NA with predicted values, it has only 15 NA.
-# The observed data from US Embassy has 254 NA.
+# After replacing NA with predicted values, it has only 5 NA.
+# The observed data from US Embassy has 100 NA.
 
 # Get the average value of PM2.5 
 bj$ave_pm <- (bj$pm_bj + bj$pm_us)/2
@@ -96,7 +100,7 @@ bj$us_pm01 <- as.numeric(bj$us_pm01)
 bj$pm01 <- filter(bj$ave_pm, c(1,1)/2, sides = 1)
 bj$pm01 <- as.numeric(bj$pm01)
 summary(bj$pm01)
-# 28 NA
+# 10 NA
 ```
 
 **ave_pm is the avearge PM levels, pm01 is the lag01 PM levels.**
@@ -107,9 +111,9 @@ bj.warm <- subset(bj, quarters(date) %in% c("Q2", "Q3"))
 bj.cold <- subset(bj, quarters(date) %in% c("Q1", "Q4"))
 ```
 
-# Model Analysis
+## Model Analysis
 
-## Functions
+### Functions
 **Crossbasis of linear PM at lag01**
 ```{r}
 cb.lin <- function(data = c()){
@@ -141,7 +145,7 @@ cb.spl <- function(data = c(), knots = c()){
 ```{r}
 mod <- function(data = c(), cause = c(), cb = c(), df=c()) {
   model <- glm(data[, cause] ~ cb + ns(tmean,3) + 
-                 splines::ns(rh, 3) + ns(time, 5*df) +
+                 splines::ns(rh, 3) + ns(time, 4*df) +
                  dow + holiday,
                family = quasipoisson(link = "log"),
                data = data,
@@ -160,16 +164,16 @@ pred <- function(cb = c(), model = c(), at = c()) {
 }
 ```
 
-## Two types of Analyses
+### Analyses
 
-**1. Knots at 75 and 150**
+#### Knots at 75 and 150
 
 * Knots
 
 ```{r}
-a.knots <- c(75, 150)
-w.knots <- c(75, 150)
-c.knots <- c(75, 150)
+a.knots <- c(75, 150) # year-round
+w.knots <- c(75, 150) # warm season
+c.knots <- c(75, 150) # cold season
 ```
 
 * Calculate the 99th percentile for prediction
@@ -183,10 +187,11 @@ c.pat <- quantile(bj.cold$pm01, probs = 0.99, na.rm = T)
 * Crossbasis for year-round, warm and cold season
 
 ```{r warning=FALSE}
+# linear model
 a.l.cb <- cb.lin(bj)
 w.l.cb <- cb.lin(bj.warm)
 c.l.cb <- cb.lin(bj.cold)
-
+# spline model
 a.s.cb <- cb.spl(bj, a.knots)
 w.s.cb <- cb.spl(bj.warm, w.knots)
 c.s.cb <- cb.spl(bj.cold, c.knots)
@@ -198,8 +203,8 @@ c.s.cb <- cb.spl(bj.cold, c.knots)
      
 ```{r}
 library(splines)
-a.l.a <- mod(bj, "tot", a.l.cb, 6)
-w.l.a <- mod(bj.warm, "tot", w.l.cb, 3)
+a.l.a <- mod(bj, "tot", a.l.cb, 6) # 6 df per year for year-round
+w.l.a <- mod(bj.warm, "tot", w.l.cb, 3) # 3 df per year for each season
 c.l.a <- mod(bj.cold, "tot", c.l.cb, 3)
 
 # Predict

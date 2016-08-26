@@ -1,4 +1,7 @@
 .Rproj.user
 .Rhistory
 .RData
+.Rmd
+.R
 *.csv
+Plots/*
