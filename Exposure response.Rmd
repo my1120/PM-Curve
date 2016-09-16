@@ -1,0 +1,845 @@
+---
+title: "linear and spline methods"
+author: "Meilin Yan"
+date: "June 10, 2016"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+ knitr::opts_chunk$set(cache = TRUE)
+```
+
+## Packages Loading
+```{r message=FALSE, warning=FALSE}
+library(dlnm)
+library(splines)
+library(ggplot2)
+library(ggthemes)
+library(lubridate)
+library(knitr)
+```
+
+## Data prep
+```{r}
+bj <- read.csv("0812bj.csv")
+bj$date <- as.Date(bj$date)
+bj$year <- as.factor(year(bj$date))
+bj$month <- month(bj$date)
+bj$month <- as.factor(bj$month)
+bj$ym <- as.factor(bj$year:bj$month)
+bj$tot <- bj$A00toR99
+bj$cir <- bj$I00toI99
+bj$resp <- bj$J00toJ99
+bj <- subset(bj, select = c("date", "year", "month", "tmean", "rh", "pm25hdbl",
+                            "pm25ussg", "o3", "time", "dow", "tot", "cir", "resp"))
+```
+
+### Holidays
+Set up holiday variable.
+
+```{r echo=FALSE}
+holi <- read.csv("beijing_date_holiday.csv")
+holi$date <- as.Date(holi$date)
+holiday1 <- holi$date[holi$Holiday == 1]
+
+# Create holiday for dates not included in holi data
+# summary(holi$date)
+# 2008
+a1 <- as.Date("2008-01-01")
+a2 <- seq(as.Date("2008-02-06"), as.Date("2008-02-12"), by=1)
+a3 <- seq(as.Date("2008-04-04"), as.Date("2008-04-06"), by=1)
+a4 <- seq(as.Date("2008-05-01"), as.Date("2008-05-03"), by=1)
+a5 <- seq(as.Date("2008-06-07"), as.Date("2008-06-09"), by=1)
+a6 <- seq(as.Date("2008-09-13"), as.Date("2008-09-15"), by=1)
+a7 <- seq(as.Date("2008-09-29"), as.Date("2008-10-05"), by=1)
+
+# 2009
+b1 <- seq(as.Date("2009-01-01"), as.Date("2009-01-03"), by=1)
+b2 <- seq(as.Date("2009-01-25"), as.Date("2009-01-31"), by=1)
+
+holiday <- unique(c(holiday1,a1,a2,a3,a4,a5,a6,a7,b1,b2))
+bj$holiday <- ifelse(bj$date %in% holiday, 1, 0)
+bj$holiday <- factor(bj$holiday, levels = c(1, 0))
+```
+
+### Exclude days of 2008
+```{r}
+bj <- subset(bj, year != 2008)
+```
+
+### Prediction and imputation
+```{r echo=FALSE}
+# Observed PM from Beijing (Non-embassy) monitor
+bj$pm_bj <- bj$pm25hdbl
+
+# Observed PM from Embassy monitor
+bj$pm_us <- bj$pm25ussg
+
+# predict pm_bj with pm_us
+mod_bj <- lm(pm_bj ~ pm_us, na.action = na.exclude, data = bj)
+bj$pre_bj <- predict(mod_bj, newdata = bj)
+bj$pm_bj <- ifelse(is.na(bj$pm_bj), bj$pre_bj, bj$pm_bj)
+# After replacing NA with predicted values, it has only 5 NA.
+# The observed data from non-Embassy monitor has 142 NA.
+
+# predict pm_us with pm_bj
+mod_us <- lm(pm_us ~ pm_bj, data = bj)
+bj$pre_us <- predict(mod_us, newdata = bj)
+bj$pm_us <- ifelse(is.na(bj$pm_us), bj$pre_us, bj$pm_us)
+# After replacing NA with predicted values, it has only 5 NA.
+# The observed data from US Embassy has 100 NA.
+
+# Get the average value of PM2.5 
+bj$ave_pm <- (bj$pm_bj + bj$pm_us)/2
+
+# Create lag01 PM2.5 
+bj$bj_pm01 <- filter(bj$pm25hdbl, c(1,1)/2, sides = 1)
+bj$bj_pm01 <- as.numeric(bj$bj_pm01)
+# bj$bj_pm01 <- round(bj$bj_pm01, 2)
+
+bj$us_pm01 <- filter(bj$pm25ussg, c(1,1)/2, sides = 1)
+bj$us_pm01 <- as.numeric(bj$us_pm01)
+# bj$us_pm01 <- round(bj$us_pm01, 2)
+
+bj$pm01 <- filter(bj$ave_pm, c(1,1)/2, sides = 1)
+bj$pm01 <- as.numeric(bj$pm01)
+# summary(bj$pm01)
+# 10 NA
+```
+
+**ave_pm is the avearge PM levels, pm01 is the lag01 PM levels.**
+
+### Subset cold season and warm season
+```{r}
+bj.warm <- subset(bj, quarters(date) %in% c("Q2", "Q3"))
+bj.cold <- subset(bj, quarters(date) %in% c("Q1", "Q4"))
+# Generate "group" for bj.cold
+bj.cold$gr[bj.cold$year == 2009 & bj.cold$month %in% c(1:3)] <- "g1"
+
+bj.cold$gr[bj.cold$year == 2009 & bj.cold$month %in% c(10:12)] <- "g2"
+bj.cold$gr[bj.cold$year == 2010 & bj.cold$month %in% c(1:3)] <- "g2"
+
+bj.cold$gr[bj.cold$year == 2010 & bj.cold$month %in% c(10:12)] <- "g3"
+bj.cold$gr[bj.cold$year == 2011 & bj.cold$month %in% c(1:3)] <- "g3"
+
+bj.cold$gr[bj.cold$year == 2011 & bj.cold$month %in% c(10:12)] <- "g4"
+bj.cold$gr[bj.cold$year == 2012 & bj.cold$month %in% c(1:3)] <- "g4"
+
+bj.cold$gr[bj.cold$year == 2012 & bj.cold$month %in% c(10:12)] <- "g5"
+bj.cold$gr <- as.factor(bj.cold$gr)
+```
+
+## Summary Analysis
+### Correlation between data from two monitors
+```{r fig.width=18, fig.height=6}
+par(mfrow = c(1, 3))
+# Year-round
+plot(bj$pm25ussg ~ bj$pm25hdbl, cex = 0.5, xlim = c(0, 500), 
+     ylim = c(0, 500),
+     xlab = "Hai Dian Bao Lian",
+     ylab = "US Embassy",
+     main = "Year-round")
+abline(a = 0, b = 1, col = "red")
+
+# Cold season
+plot(bj.cold$pm25ussg ~ bj.cold$pm25hdbl, cex = 0.5, xlim = c(0, 500), 
+     ylim = c(0, 500),
+     xlab = "Hai Dian Bao Lian",
+     ylab = "US Embassy",
+     main = "Cold season")
+abline(a = 0, b = 1, col = "red")
+
+# Warm season
+plot(bj.warm$pm25ussg ~ bj.warm$pm25hdbl, cex = 0.5, xlim = c(0, 500), 
+     ylim = c(0, 500),
+     xlab = "Hai Dian Bao Lian",
+     ylab = "US Embassy",
+     main = "Warm season")
+abline(a = 0, b = 1, col = "red")
+```
+
+### Plot PM2.5 by month 
+```{r fig.width=10, fig.height=6}
+# pdf("monthly_us.pdf", width = 12, height = 7)
+ggplot(bj, aes(x = month, y = ave_pm)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.4, size = 0.5, 
+              width = 0.4, height = 0) +
+  geom_vline(xintercept = c(3.5, 9.5),
+             linetype = "longdash") +
+  annotate("text", x = 6.5, y = 390, label = "Warm Season", 
+           size = 5) +
+  annotate("text", x = 2, y = 390, label = "Cold Season",
+           size = 5) +
+  annotate("text", x = 11, y = 390, label = "Cold Season",
+           size = 5) +
+  labs(y = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", 
+                        sep = " ")),
+       x = expression(Month)) +
+  theme_hc()
+```
+
+### Frequency plot
+```{r fig.width=6, fig.height=10}
+par(mar = c(5.1, 5.1, 4.1, 2.1))
+par(mfrow = c(3, 1))
+br <- seq(0, 400, 10)
+hist(bj$ave_pm, breaks = br, main = "Year-round", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")), 
+     xlim = c(10, 400), ylim = c(0, 230),
+     cex.axis = 1.2, cex.lab = 1.2, cex.main = 1.5)
+abline(v = 35, lty = 3, lwd = 2.5)
+abline(v = 75, lwd = 2.5)
+hist(bj.cold$ave_pm, breaks = br, main = "Cold Season",
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")), 
+     xlim = c(10, 400), ylim = c(0, 230),
+     cex.axis = 1.2, cex.lab = 1.2, cex.main = 1.5)
+abline(v = 35, lty = 3, lwd = 2.5)
+abline(v = 75, lwd = 2.5)
+hist(bj.warm$ave_pm, breaks = br, main = "Warm Season",
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")), 
+     xlim = c(10, 400), ylim = c(0, 230),
+     cex.axis = 1.2, cex.lab = 1.2, cex.main = 1.5)
+abline(v = 35, lty = 3, lwd = 2.5)
+abline(v = 75, lwd = 2.5)
+```
+
+### Summary statistics table
+
+```{r}
+Variables <- c("PM2.5", "Temperature", "Relative humidity", "Total death", 
+               "Circulatory death", "Respiratory death")
+vars <- c("ave_pm", "tmean", "rh", "tot", "cir", "resp")
+year.count <- colSums(!is.na(bj[, vars]))
+sum.tab <- cbind(Variables, year.count)
+sum.tab <- as.data.frame(sum.tab)
+sum.tab[, c("year.me.rg", "cold.count", "cold.me.rg", "warm.count", "warm.me.rg")] <- NA
+
+for(i in vars){
+  sum.tab[i,]$year.me.rg <- paste0(round(mean(bj[, i], na.rm = T), 1), 
+                                 "(", round(range(bj[, i], na.rm = T)[1], 1), ",",
+                                 round(range(bj[, i], na.rm = T)[2], 1), ")")
+  sum.tab[i,]$cold.count <- sum(!is.na(bj.cold[, i]))
+  sum.tab[i,]$cold.me.rg <- paste0(round(mean(bj.cold[, i], na.rm = T), 1), 
+                                 "(", round(range(bj.cold[, i], na.rm = T)[1], 1), ",",
+                                 round(range(bj.cold[, i], na.rm = T)[2], 1), ")")
+  sum.tab[i,]$warm.count <- sum(!is.na(bj.warm[, i]))
+  sum.tab[i,]$warm.me.rg <- paste0(round(mean(bj.warm[, i], na.rm = T), 1), 
+                                 "(", round(range(bj.warm[, i], na.rm = T)[1], 1), ",",
+                                 round(range(bj.warm[, i], na.rm = T)[2], 1), ")")
+  }
+kable(sum.tab, format = "markdown")  
+```
+
+## Model Analysis
+
+### Functions
+**Crossbasis of linear PM at lag01**
+```{r}
+cb.lin <- function(data = c(), group = NULL){
+  cb <- crossbasis(data$ave_pm, lag = 1, group = group,
+                   argvar = list(fun = "lin", cen = FALSE),
+                   arglag = list(fun = "strata", df = 1))
+  return(cb)
+}
+```
+
+**Crossbasis of spline PM at lag01**
+```{r}
+cb.spl <- function(data = c(), knots = c(), group = NULL){
+  cb <- crossbasis(data$ave_pm, lag = 1, group = group,
+                   argvar = list(fun = "ns", knots = knots, cen = 0),
+                   arglag = list(fun = "strata", df = 1))
+  return(cb)
+}
+```
+
+**GLM Model**
+```{r}
+mod <- function(data = c(), cause = c(), cb = c(), df=c()) {
+  model <- glm(data[, cause] ~ cb + ns(tmean,3) + 
+                 splines::ns(rh, 3) + ns(time, 4*df) +
+                 dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = data,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8,
+                                     maxit = 10000))
+  return(model)
+}
+```
+
+**Predict function**
+```{r}
+pred <- function(cb = c(), model = c(), at = c()) {
+  pred.pm <- crosspred(cb, model, at = at, cumul = FALSE)
+  return(pred.pm)
+}
+```
+
+### Analyses
+
+#### Knots at 75 and 150
+
+* Knots
+
+```{r}
+a.knots <- c(75, 150) # year-round
+w.knots <- c(75, 150) # warm season
+c.knots <- c(75, 150) # cold season
+```
+
+* Calculate the 99th percentile for prediction
+
+```{r}
+a.pat <- quantile(bj$pm01, probs = 0.99, na.rm = T)
+w.pat <- quantile(bj.warm$pm01, probs = 0.99, na.rm = T)
+c.pat <- quantile(bj.cold$pm01, probs = 0.99, na.rm = T)
+```
+
+* Crossbasis for year-round, warm and cold season
+
+```{r warning=FALSE}
+# linear model
+a.l.cb <- cb.lin(bj)
+w.l.cb <- cb.lin(bj.warm, group = bj.warm$year)
+c.l.cb <- cb.lin(bj.cold, group = bj.cold$gr)
+# spline model
+a.s.cb <- cb.spl(bj, a.knots)
+w.s.cb <- cb.spl(bj.warm, w.knots, group = bj.warm$year)
+c.s.cb <- cb.spl(bj.cold, c.knots, group = bj.cold$gr)
+```
+
+* Total death
+
+     + Linear model
+     
+```{r}
+library(splines)
+a.l.a <- mod(bj, "tot", a.l.cb, 6) # 6 df per year for year-round
+w.l.a <- mod(bj.warm, "tot", w.l.cb, 3) # 3 df per year for each season
+c.l.a <- mod(bj.cold, "tot", c.l.cb, 3)
+
+# Predict
+a.l.p.a <- pred(a.l.cb, a.l.a, at = 0:a.pat)
+w.l.p.a <- pred(w.l.cb, w.l.a, at = 0:w.pat)
+c.l.p.a <- pred(c.l.cb, c.l.a, at = 0:c.pat)
+```
+
+* Total death
+
+     + Spline model
+  
+```{r}
+a.s.a <- mod(bj, "tot", a.s.cb, 6)
+w.s.a <- mod(bj.warm, "tot", w.s.cb, 3)
+c.s.a <- mod(bj.cold, "tot", c.s.cb, 3)
+
+# Predict
+a.s.p.a <- pred(a.s.cb, a.s.a, at = 0:a.pat)
+w.s.p.a <- pred(w.s.cb, w.s.a, at = 0:w.pat)
+c.s.p.a <- pred(c.s.cb, c.s.a, at = 0:c.pat)
+```
+
+* Plot total death
+  
+Set warning=FALSE because some values were clipped in the rug(...).
+
+```{r warning=FALSE, fig.width=7, fig.height=10}
+#pdf("Plots/total_knots75_150.pdf", width = 6, height = 10)
+par(mfrow=c(3,2))
+# Year-round
+plot(a.l.p.a, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", 
+                        sep = " ")),
+     main = "Year-round", ylim = c(0.9, 1.1), xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.s.p.a, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Year-round", ylim = c(0.9, 1.1), xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+# Cold season
+plot(c.l.p.a, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Cold Season", ylim = c(0.9, 1.1), xlim = c(0, 250))
+rug(bj.cold$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(c.s.p.a, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death",
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Cold Season", ylim = c(0.9, 1.1), xlim = c(0, 250))
+rug(bj.cold$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+# Warm season
+plot(w.l.p.a, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Warm Season", ylim = c(0.9, 1.1), xlim = c(0, 250))
+rug(bj.warm$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(w.s.p.a, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Total Death",
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Warm Season", ylim = c(0.9, 1.1), xlim = c(0, 250))
+rug(bj.warm$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+#dev.off()
+```
+
+* Circulatory death
+
+    + Linear model
+  
+```{r}
+a.l.c <- mod(bj, "cir", a.l.cb, 6)
+w.l.c <- mod(bj.warm, "cir", w.l.cb, 3)
+c.l.c <- mod(bj.cold, "cir", c.l.cb, 3)
+
+# Predict
+a.l.p.c <- pred(a.l.cb, a.l.c, at = 0:a.pat)
+w.l.p.c <- pred(w.l.cb, w.l.c, at = 0:w.pat)
+c.l.p.c <- pred(c.l.cb, c.l.c, at = 0:c.pat)
+```
+
+* Circulatory death
+
+    + Spline model
+  
+```{r}
+a.s.c <- mod(bj, "cir", a.s.cb, 6)
+w.s.c <- mod(bj.warm, "cir", w.s.cb, 3)
+c.s.c <- mod(bj.cold, "cir", c.s.cb, 3)
+
+# Predict
+a.s.p.c <- pred(a.s.cb, a.s.c, at = 0:a.pat)
+w.s.p.c <- pred(w.s.cb, w.s.c, at = 0:w.pat)
+c.s.p.c <- pred(c.s.cb, c.s.c, at = 0:c.pat)
+```
+
+* Plot circulatory death
+The effects of PM2.5 on circulatory death are still high at the higher exposure levels of PM2.5.
+
+```{r warning=FALSE, fig.width=7, fig.height=10}
+#pdf("Plots/cir_knots75_150.pdf", width = 6, height = 10)
+par(mfrow=c(3,2))
+# Year-round
+plot(a.l.p.c, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Circulatory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", 
+                        sep = " ")),
+     main = "Year-round", ylim = c(0.88, 1.15), xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.s.p.c, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Circulatory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Year-round", ylim = c(0.88, 1.15), xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+# Cold season
+plot(c.l.p.c, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Circulatory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Cold Season", ylim = c(0.88, 1.15), xlim = c(0, 250))
+rug(bj.cold$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(c.s.p.c, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Circulatory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Cold Season", ylim = c(0.88, 1.15), xlim = c(0, 250))
+rug(bj.cold$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+# Warm season
+plot(w.l.p.c, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Circulatory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Warm Season", ylim = c(0.88, 1.15), xlim = c(0, 250))
+rug(bj.warm$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(w.s.p.c, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Circulatory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Warm Season", ylim = c(0.88, 1.15), xlim = c(0, 250))
+rug(bj.warm$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+```
+
+* Respiratory death
+
+    + Linear model
+  
+```{r}
+a.l.r <- mod(bj, "resp", a.l.cb, 6)
+w.l.r <- mod(bj.warm, "resp", w.l.cb, 3)
+c.l.r <- mod(bj.cold, "resp", c.l.cb, 3)
+
+# Predict
+a.l.p.r <- pred(a.l.cb, a.l.r, at = 0:a.pat)
+w.l.p.r <- pred(w.l.cb, w.l.r, at = 0:w.pat)
+c.l.p.r <- pred(c.l.cb, c.l.r, at = 0:c.pat)
+```
+
+* Respiratory death
+
+    + Spline Model
+   
+```{r}
+a.s.r <- mod(bj, "resp", a.s.cb, 6)
+w.s.r <- mod(bj.warm, "resp", w.s.cb, 3)
+c.s.r <- mod(bj.cold, "resp", c.s.cb, 3)
+
+# Predict Spline Model
+a.s.p.r <- pred(a.s.cb, a.s.r, at = 0:a.pat)
+w.s.p.r <- pred(w.s.cb, w.s.r, at = 0:w.pat)
+c.s.p.r <- pred(c.s.cb, c.s.r, at = 0:c.pat)
+```
+
+* Plot respiratory death
+
+The effects of PM2.5 on circulatory death are leveling off at the higher exposure levels of PM2.5.
+
+```{r warning=FALSE, fig.width=7, fig.height=10}
+#pdf("Plots/resp_knots75_150.pdf", width = 6, height = 10)
+par(mfrow=c(3,2))
+# Year-round
+plot(a.l.p.r, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Respiratory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", 
+                        sep = " ")),
+     main = "Year-round", ylim = c(0.85, 1.30), xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(a.s.p.r, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Respiratory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Year-round", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+# Cold season
+plot(c.l.p.r, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Respiratory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Cold Season", ylim = c(0.85, 1.30), xlim = c(0, 250))
+rug(bj.cold$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(c.s.p.r, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Respiratory Death",
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Cold Season", ylim = c(0.85, 1.30), xlim = c(0, 250))
+rug(bj.cold$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+# Warm season
+plot(w.l.p.r, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Respiratory Death",
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Warm Season", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj.warm$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+
+plot(w.s.p.r, "overall", lag = 0, col = 1, ci = "lines",
+     ylab = "RR of Respiratory Death", 
+     xlab = expression(paste(PM[2.5], " concentration", 
+                        " (", mu,"g/", m^3, ")", sep = " ")),
+     main = "Warm Season", ylim = c(0.85, 1.30), 
+     xlim = c(0, 250))
+rug(bj.warm$pm01, ticksize = 0.05, side = 1, lwd = 0.5)
+```
+
+### Extract RR from linear model
+Also considering estimates based on spline model.
+```{r warning=FALSE}
+rr.fun <- function(data = c(), group = NULL, cause = c(), df = c()){
+     cb <- crossbasis(data$ave_pm, lag = 1, group = group,
+                      argvar = list(fun = "lin", cen = 0),
+                      arglag = list(fun = "strata", df = 1))
+     
+     mod <- glm(data[, cause] ~ cb + splines::ns(tmean,3) + splines::ns(rh, 3) + 
+                  splines::ns(time, 4*df) + dow + holiday,
+               family = quasipoisson(link = "log"), data = data,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+     
+     pred <- crosspred(cb, mod, at = 10)
+     
+     est <- round((pred$allRRfit - 1)*100, 2)
+     low <- round((pred$allRRlow - 1)*100, 2)
+     high <- round((pred$allRRhigh - 1)*100, 2)
+     result <- paste0(est, "(", low, ",", high, ")")
+     
+     return(result)
+}
+
+cause_of_death <- c("All causes", "Circulatory", "Respiratory")
+year_round <- c(rr.fun(data = bj, cause = "tot", df = 6), rr.fun(data = bj, cause = "cir", df = 6), 
+                rr.fun(data = bj, cause = "resp", df = 6))
+cold_season <- c(rr.fun(data = bj.cold, group = bj.cold$gr, cause = "tot", df = 3), 
+                 rr.fun(data = bj.cold, group = bj.cold$gr, cause = "cir", df = 3), 
+                rr.fun(data = bj.cold, group = bj.cold$gr, cause = "resp", df = 3))
+warm_season <- c(rr.fun(data = bj.warm, group = bj.warm$year, cause = "tot", df = 3), 
+                 rr.fun(data = bj.warm, group = bj.warm$gr, cause = "cir", df = 3), 
+                rr.fun(data = bj.warm, group = bj.warm$gr, cause = "resp", df = 3))
+rr.tab <- cbind(cause_of_death, year_round, cold_season, warm_season)
+kable(rr.tab, format = "markdown")
+```
+
+
+### Attributable risk
+
+Privious health impact studies based on estimated effects from linear model. Our results show attributable numbers calculated from estimates from spline model is less than those from linear model.
+
+Conterfactual PM2.5 thresholds are 7.5, 25, 75$\mu g/m^3$.
+Here only calculate attributable risk based on estimated effects from curve fitting year-round data.
+
+Attributable risk model(attrdl in the following chunk) is from Antonio's paper (Attributable risk from distributed lag models).
+```{r}
+attrdl <- function(x,basis,cases,model=NULL,coef=NULL,vcov=NULL,type="af",
+  dir="back",tot=TRUE,cen,range=NULL,sim=FALSE,nsim=5000) {
+################################################################################
+#
+  # CHECK VERSION OF THE DLNM PACKAGE
+  # browser()
+  if(packageVersion("dlnm")<"2.2.0") 
+    stop("update dlnm package to version >= 2.2.0")
+#
+  # EXTRACT NAME AND CHECK type AND dir
+  name <- deparse(substitute(basis))
+  type <- match.arg(type,c("an","af"))
+  dir <- match.arg(dir,c("back","forw"))
+#
+  # DEFINE CENTERING
+  if(missing(cen) && is.null(cen <- attr(basis,"argvar")$cen))
+    stop("'cen' must be provided")
+  if(!is.numeric(cen) && length(cen)>1L) stop("'cen' must be a numeric scalar")
+  attributes(basis)$argvar$cen <- NULL
+#  
+  # SELECT RANGE (FORCE TO CENTERING VALUE OTHERWISE, MEANING NULL RISK)
+  if(!is.null(range)) x[x<range[1]|x>range[2]] <- cen
+#
+  # COMPUTE THE MATRIX OF
+  #   - LAGGED EXPOSURES IF dir="back"
+  #   - CONSTANT EXPOSURES ALONG LAGS IF dir="forw"
+  lag <- attr(basis,"lag")
+  if(NCOL(x)==1L) {
+    at <- if(dir=="back") tsModel:::Lag(x,seq(lag[1],lag[2])) else 
+      matrix(rep(x,diff(lag)+1),length(x))
+  } else {
+    if(dir=="forw") stop("'x' must be a vector when dir='forw'")
+    if(ncol(at <- x)!=diff(lag)+1) 
+      stop("dimension of 'x' not compatible with 'basis'")
+  }
+#
+  # cases: TRANFORM IN MEAN OF FUTURE CASES IF dir="forw"
+  if(NCOL(cases)>1L) {
+    if(dir=="back") stop("'cases' must be a vector if dir='back'")
+    if(ncol(cases)!=diff(lag)+1) stop("dimension of 'cases' not compatible")
+    cases <- rowMeans(cases)
+  } else {
+    if(dir=="forw") 
+      cases <- rowMeans(as.matrix(tsModel:::Lag(cases,-seq(lag[1],lag[2]))))
+  }
+  if(length(cases)!=NROW(at)) stop("'x' and 'cases' not consistent")
+#
+################################################################################
+#
+  # EXTRACT COEF AND VCOV IF MODEL IS PROVIDED
+  if(!is.null(model)) {
+    cond <- paste0(name,"[[:print:]]*v[0-9]{1,2}\\.l[0-9]{1,2}")
+    if(ncol(basis)==1L) cond <- name
+    model.class <- class(model)
+    coef <- dlnm:::getcoef(model,model.class)
+    ind <- grep(cond,names(coef))
+    coef <- coef[ind]
+    vcov <- dlnm:::getvcov(model,model.class)[ind,ind,drop=FALSE]
+    model.link <- dlnm:::getlink(model,model.class)
+    if(model.link!="log") stop("'model' must have a log link function")
+  }
+#
+  # IF REDUCED ESTIMATES ARE PROVIDED
+  typebasis <- ifelse(length(coef)!=ncol(basis),"one","cb")
+#
+################################################################################
+#
+  # PREPARE THE ARGUMENTS FOR TH BASIS TRANSFORMATION
+  predvar <- if(typebasis=="one") x else seq(NROW(at))
+  predlag <- if(typebasis=="one") 0 else dlnm:::seqlag(lag)
+#  
+  # CREATE THE MATRIX OF TRANSFORMED CENTRED VARIABLES (DEPENDENT ON typebasis)
+  if(typebasis=="cb") {
+    Xpred <- dlnm:::mkXpred(typebasis,basis,at,predvar,predlag,cen)
+    Xpredall <- 0
+    for (i in seq(length(predlag))) {
+      ind <- seq(length(predvar))+length(predvar)*(i-1)
+      Xpredall <- Xpredall + Xpred[ind,,drop=FALSE]
+    }
+  } else {
+    basis <- do.call(onebasis,c(list(x=x),attr(basis,"argvar")))
+    Xpredall <- dlnm:::mkXpred(typebasis,basis,x,predvar,predlag,cen)
+  }
+#  
+  # CHECK DIMENSIONS  
+  if(length(coef)!=ncol(Xpredall))
+    stop("arguments 'basis' do not match 'model' or 'coef'-'vcov'")
+  if(any(dim(vcov)!=c(length(coef),length(coef)))) 
+    stop("arguments 'coef' and 'vcov' do no match")
+  if(typebasis=="one" && dir=="back")
+    stop("only dir='forw' allowed for reduced estimates")
+#
+################################################################################
+#
+  # COMPUTE AF AND AN 
+  af <- 1-exp(-rowSums(as.matrix(Xpredall%*%coef)))
+  an <- af*cases
+#
+  # TOTAL (ACCOUNTING FOR MISSING)
+  if(tot) {
+    isna <- is.na(an)
+    af <- sum(an[!isna])/sum(cases[!isna])
+    an <- af*sum(cases,na.rm=T)
+  }
+#
+################################################################################
+#
+  # EMPIRICAL CONFIDENCE INTERVALS
+  if(!tot && sim) {
+    sim <- FALSE
+    warning("simulation samples only returned for tot=T")
+  }
+  if(sim) {
+    # SAMPLE COEF
+    k <- length(coef)
+    eigen <- eigen(vcov)
+    X <- matrix(rnorm(length(coef)*nsim),nsim)
+    coefsim <- coef + eigen$vectors %*% diag(sqrt(eigen$values),k) %*% t(X)
+    # RUN THE LOOP
+    afsim <- apply(coefsim,2, function(coefi) {
+      ani <- (1-exp(-drop(Xpredall%*%coefi)))*cases
+      sum(ani[!is.na(ani)])/sum(cases[!is.na(ani)])
+    })
+    ansim <- afsim*sum(cases,na.rm=T)
+  }
+#
+################################################################################
+#
+  res <- if(sim) {
+    if(type=="an") ansim else afsim
+  } else {
+    if(type=="an") an else af    
+  }
+#
+  return(res)
+}
+
+```
+
+**Function to format attributable number and confidence interval**
+```{r}
+int <- function(a = c(), b = c()){
+  out <- paste0(round(a, 0), "(", round(b[1], 0), ",", round(b[2], 0), ")")
+  return(out)
+}
+```
+
+**Curve to fit year-round data**
+```{r}
+### Linear model
+attr.lin <- function(data = c(), cold = c(), warm = c(), cause = "tot", cen = c()){
+  cb <- cb.lin(data = data)
+  model <- mod(data = data, cause = cause, cb = cb, df = 6) # model fits year-round data
+  # year-round attributable risk
+  an.year <- attrdl(x = data$ave_pm, basis = cb, cases = data[, cause], model = model, 
+         cen = cen, type = "an", dir = "forw")
+  ci.year <- quantile(attrdl(x = data$ave_pm, basis = cb, cases = data[, cause], model = model,
+                        cen = cen, type = "an", dir = "forw", sim = T, nsim = 1000),
+                        c(0.025, 0.975))
+  out.year <- int(a = an.year, b = ci.year)
+  # cold season
+  an.cold <- attrdl(x = cold$ave_pm, basis = cb, cases = cold[, cause], model = model, 
+                    cen = cen, type = "an", dir = "forw")
+  ci.cold <- quantile(attrdl(x = cold$ave_pm, basis = cb, cases = cold[, cause], model = model,
+                             cen = cen, type = "an", dir = "forw", sim = T, nsim = 1000),
+                      c(0.025, 0.975))
+  out.cold <- int(a = an.cold, b = ci.cold)
+  # warm season
+  an.warm <- attrdl(x = warm$ave_pm, basis = cb, cases = warm[, cause], model = model, 
+                    cen = cen, type = "an", dir = "forw")
+  ci.warm <- quantile(attrdl(x = warm$ave_pm, basis = cb, cases = warm[, cause], model = model,
+                             cen = cen, type = "an", dir = "forw", sim = T, nsim = 1000),
+                      c(0.025, 0.975))
+  out.warm <- int(a = an.warm, b = ci.warm)
+  output <- rbind(out.year, out.cold, out.warm)
+  return(output)
+}
+
+### Splines model
+attr.spl <- function(data = c(), cold = c(), warm = c(), cause = "tot", cen = c()){
+  cb <- cb.spl(data = data, knots = c(75, 150))
+  mod <- mod(data = data, cause = cause, cb = cb, df = 6)
+  # year-round
+  an.year <- attrdl(x = data$ave_pm, basis = cb, cases = data[, cause], model = mod, 
+               cen = cen, type = "an", dir = "forw")
+  ci.year <- quantile(attrdl(x = data$ave_pm, basis = cb, cases = data[, cause], model = mod,
+                        cen = cen,  type = "an", dir = "forw", sim = T, nsim = 1000),
+                 c(0.025, 0.975))
+  out.year <- int(a = an.year, b = ci.year)
+  # cold season
+  an.cold <- attrdl(x = cold$ave_pm, basis = cb, cases = cold[, cause], model = mod, 
+                    cen = cen, type = "an", dir = "forw")
+  ci.cold <- quantile(attrdl(x = cold$ave_pm, basis = cb, cases = cold[, cause], model = mod,
+                             cen = cen, type = "an", dir = "forw", sim = T, nsim = 1000),
+                      c(0.025, 0.975))
+  out.cold <- int(a = an.cold, b = ci.cold)
+  # warm season
+  an.warm <- attrdl(x = warm$ave_pm, basis = cb, cases = warm[, cause], model = mod, 
+                    cen = cen, type = "an", dir = "forw")
+  ci.warm <- quantile(attrdl(x = warm$ave_pm, basis = cb, cases = warm[, cause], model = mod,
+                             cen = cen, type = "an", dir = "forw", sim = T, nsim = 1000),
+                      c(0.025, 0.975))
+  out.warm <- int(a = an.warm, b = ci.warm)
+  output <- rbind(out.year, out.cold, out.warm)
+  return(output)
+}
+```
+
+**Show attributable number**
+```{r warning=FALSE}
+require(splines)
+l1 <- attr.lin(data = bj, cold = bj.cold, warm = bj.warm, cen = 7.5)
+l2 <- attr.lin(data = bj, cold = bj.cold, warm = bj.warm, cen = 25)
+l3 <- attr.lin(data = bj, cold = bj.cold, warm = bj.warm, cen = 75)
+ll <- cbind(l1, l2, l3)
+rownames(ll) <- c("lin-year", "lin-cold", "lin-warm")
+
+s1 <- attr.spl(data = bj, cold = bj.cold, warm = bj.warm, cen = 7.5)
+s2 <- attr.spl(data = bj, cold = bj.cold, warm = bj.warm, cen = 25)
+s3 <- attr.spl(data = bj, cold = bj.cold, warm = bj.warm, cen = 75)
+ss <- cbind(s1, s2, s3)
+rownames(ss) <- c("spl-year", "spl-cold", "spl-warm")
+attr.tot <- rbind(ll, ss)
+colnames(attr.tot) <- c("7.5", "25", "75")
+kable(attr.tot, format = "markdown")
+```
+
