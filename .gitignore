@@ -5,9 +5,14 @@
 .R
 *.csv
 Plots/*
+<<<<<<< HEAD
 Exposure_response_cache/*
 Exposure_response_files/*
 *.rds
 *.html
 *.png
 
+=======
+*.rds
+Antonio_Attributable\ risk\ model.R
+>>>>>>> 24ebe71036c9cae6b676be6833b7fffb4c341190
