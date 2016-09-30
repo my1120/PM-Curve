@@ -1,0 +1,433 @@
+---
+title: "df selection and model assessment"
+author: "Meilin Yan"
+date: "September 27, 2016"
+output: html_document
+---
+\
+Use all-cause mortality for the following analysis.
+\
+
+### Packages Loading
+```{r message=FALSE, warning=FALSE}
+library(dlnm)
+library(splines)
+library(ggplot2)
+library(ggthemes)
+library(lubridate)
+library(knitr)
+```
+
+### Data prep
+```{r}
+bj <- read.csv("0812bj.csv")
+bj$date <- as.Date(bj$date)
+bj$year <- year(bj$date)
+bj$month <- month(bj$date)
+bj$month <- as.factor(bj$month)
+bj$tot <- bj$A00toR99
+bj$cir <- bj$I00toI99
+bj$resp <- bj$J00toJ99
+bj <- subset(bj, select = c("date", "year", "month", "tmean", "rh", "pm25hdbl",
+                            "pm25ussg", "o3", "time", "dow", "tot", "cir", "resp"))
+```
+
+#### Holidays
+Set up holiday variable.
+
+```{r echo=FALSE}
+holi <- read.csv("beijing_date_holiday.csv")
+holi$date <- as.Date(holi$date)
+holiday1 <- holi$date[holi$Holiday == 1]
+
+# Create holiday for dates not included in holi data
+# summary(holi$date)
+# 2008
+a1 <- as.Date("2008-01-01")
+a2 <- seq(as.Date("2008-02-06"), as.Date("2008-02-12"), by=1)
+a3 <- seq(as.Date("2008-04-04"), as.Date("2008-04-06"), by=1)
+a4 <- seq(as.Date("2008-05-01"), as.Date("2008-05-03"), by=1)
+a5 <- seq(as.Date("2008-06-07"), as.Date("2008-06-09"), by=1)
+a6 <- seq(as.Date("2008-09-13"), as.Date("2008-09-15"), by=1)
+a7 <- seq(as.Date("2008-09-29"), as.Date("2008-10-05"), by=1)
+
+# 2009
+b1 <- seq(as.Date("2009-01-01"), as.Date("2009-01-03"), by=1)
+b2 <- seq(as.Date("2009-01-25"), as.Date("2009-01-31"), by=1)
+
+holiday <- unique(c(holiday1,a1,a2,a3,a4,a5,a6,a7,b1,b2))
+bj$holiday <- ifelse(bj$date %in% holiday, 1, 0)
+bj$holiday <- factor(bj$holiday, levels = c(1, 0))
+```
+
+#### Exclude days of 2008
+```{r}
+bj <- subset(bj, year != 2008)
+bj$year <- as.factor(bj$year)
+```
+
+#### Prediction and imputation
+```{r echo=FALSE}
+# Observed PM from Beijing (Non-embassy) monitor
+bj$pm_bj <- bj$pm25hdbl
+
+# Observed PM from Embassy monitor
+bj$pm_us <- bj$pm25ussg
+
+# predict pm_bj with pm_us
+mod_bj <- lm(pm_bj ~ pm_us, na.action = na.exclude, data = bj)
+bj$pre_bj <- predict(mod_bj, newdata = bj)
+bj$pm_bj <- ifelse(is.na(bj$pm_bj), bj$pre_bj, bj$pm_bj)
+# After replacing NA with predicted values, it has only 5 NA.
+# The observed data from non-Embassy monitor has 142 NA.
+
+# predict pm_us with pm_bj
+mod_us <- lm(pm_us ~ pm_bj, data = bj)
+bj$pre_us <- predict(mod_us, newdata = bj)
+bj$pm_us <- ifelse(is.na(bj$pm_us), bj$pre_us, bj$pm_us)
+# After replacing NA with predicted values, it has only 5 NA.
+# The observed data from US Embassy has 100 NA.
+
+# Get the average value of PM2.5 
+bj$ave_pm <- (bj$pm_bj + bj$pm_us)/2
+
+# Create lag01 PM2.5 
+bj$bj_pm01 <- filter(bj$pm25hdbl, c(1,1)/2, sides = 1)
+bj$bj_pm01 <- as.numeric(bj$bj_pm01)
+# bj$bj_pm01 <- round(bj$bj_pm01, 2)
+
+bj$us_pm01 <- filter(bj$pm25ussg, c(1,1)/2, sides = 1)
+bj$us_pm01 <- as.numeric(bj$us_pm01)
+# bj$us_pm01 <- round(bj$us_pm01, 2)
+
+bj$pm01 <- filter(bj$ave_pm, c(1,1)/2, sides = 1)
+bj$pm01 <- as.numeric(bj$pm01)
+# summary(bj$pm01)
+# 10 NA
+```
+
+**ave_pm is the avearge PM levels, pm01 is the lag01 PM levels.**
+
+#### Subset cold season and warm season
+```{r}
+bj.warm <- subset(bj, quarters(date) %in% c("Q2", "Q3"))
+bj.cold <- subset(bj, quarters(date) %in% c("Q1", "Q4"))
+```
+
+```{r echo=FALSE}
+# Generate "group" for bj.cold
+bj.cold$gr[bj.cold$year == 2009 & bj.cold$month %in% c(1:3)] <- "g1"
+
+bj.cold$gr[bj.cold$year == 2009 & bj.cold$month %in% c(10:12)] <- "g2"
+bj.cold$gr[bj.cold$year == 2010 & bj.cold$month %in% c(1:3)] <- "g2"
+
+bj.cold$gr[bj.cold$year == 2010 & bj.cold$month %in% c(10:12)] <- "g3"
+bj.cold$gr[bj.cold$year == 2011 & bj.cold$month %in% c(1:3)] <- "g3"
+
+bj.cold$gr[bj.cold$year == 2011 & bj.cold$month %in% c(10:12)] <- "g4"
+bj.cold$gr[bj.cold$year == 2012 & bj.cold$month %in% c(1:3)] <- "g4"
+
+bj.cold$gr[bj.cold$year == 2012 & bj.cold$month %in% c(10:12)] <- "g5"
+bj.cold$gr <- as.factor(bj.cold$gr)
+```
+
+### df selection
+#### data-driven method: choose df that minimizes the QAIC
+**Functions**
+```{r message=FALSE, warning=FALSE}
+# QAIC function
+fqaic <- function(model = c()) {
+  loglik <- sum(dpois(model$y, model$fitted.values, log=TRUE))
+  phi <- summary(model)$dispersion
+  qaic <- -2*loglik + 2*summary(model)$df[3]*phi
+  return(qaic)
+}
+
+# Extract relative risk
+get_rr <- function(model = c()){
+  log_coef <- summary(model)$coefficients[2, ]
+  coef <- log_coef[1] + c(0, -1, 1) * 1.96 * log_coef[2]
+  rr <- round((exp(coef*10) - 1)*100, 2)
+  grr <- paste0(rr[1], "(", rr[2], ",", rr[3], ")")
+  return(grr)
+}
+
+# GLM model
+fit <- function(data = c(), cause = "tot", df=c()) {
+  mod <- glm(data[, cause] ~ pm01 + ns(tmean,3) + 
+                 splines::ns(rh, 3) + ns(time, 4*df) +
+                 dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = data,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8,
+                                     maxit = 10000))
+  
+  aic <- round(fqaic(model = mod), 2)
+  
+  rr <- get_rr(model = mod)
+  out <- c(model = mod, aic = aic, rr = rr)
+  return(out)
+}
+```
+
+```{r message=FALSE, warning=FALSE}
+Df <- seq(4, 15, 1)
+Effects <- NA
+AIC <- NA
+df_choice_tab <- cbind(Df, Effects, AIC)
+for(i in 1:length(Df)){
+  fun <- fit(data = bj, df = Df[i])
+  df_choice_tab[i, "Effects"] <- fun$rr
+  df_choice_tab[i, "AIC"] <- fun$aic
+}
+kable(df_choice_tab, format = "markdown")
+```
+
+#### Choose df for time trend
+
+```{r eval=FALSE}
+bj$time <- 1:length(bj$date)
+dtp <- bj$date
+f1 <- glm(tot ~ ns(time, 2*4), family = quasipoisson, data = bj) # 2 df per year
+p1 <- predict(f1, data.frame(time = dtp), type = "response")
+
+f2 <- glm(tot ~ ns(time, 5*4), family = quasipoisson, data = bj) # 4 df
+p2 <- predict(f2, data.frame(time = dtp), type = "response")
+
+f3 <- glm(tot ~ ns(time, 6*4), family = quasipoisson, data = bj) # 4 df
+p3 <- predict(f3, data.frame(time = dtp), type = "response")
+
+f4 <- glm(tot ~ ns(time, 10*4), family = quasipoisson, data = bj) # 10 df
+p4 <- predict(f4, data.frame(time = dtp), type = "response")
+
+
+plot(tot ~ date, data = bj, cex = 0.3, type = "p")
+lines(p1 ~ dtp, cex = 0.1, col = "darkgrey")
+lines(p2 ~ dtp, cex = 0.1, col = "blue")
+lines(p3 ~ dtp, cex = 0.1, col = "red")
+```
+
+```{r eval=FALSE}
+bj$time <- 1:length(bj$date)
+dtp <- bj$date
+f1 <- glm(tot ~ ns(time, 2*4), family = quasipoisson, data = bj) # 2 df per year
+p1 <- predict(f1, data.frame(time = dtp), type = "response")
+
+f2 <- glm(tot ~ ns(time, 5*4), family = quasipoisson, data = bj) # 4 df
+p2 <- predict(f2, data.frame(time = dtp), type = "response")
+
+f3 <- glm(tot ~ ns(time, 6*4), family = quasipoisson, data = bj) # 4 df
+p3 <- predict(f3, data.frame(time = dtp), type = "response")
+
+f4 <- glm(tot ~ ns(time, 10*4), family = quasipoisson, data = bj) # 10 df
+p4 <- predict(f4, data.frame(time = dtp), type = "response")
+
+
+plot(tot ~ date, data = bj, cex = 0.3, type = "p")
+lines(p1 ~ dtp, cex = 0.1, col = "darkgrey")
+lines(p2 ~ dtp, cex = 0.1, col = "blue")
+lines(p3 ~ dtp, cex = 0.1, col = "red")
+m1 <- glm(ave_pm ~ ns(time, 12*4), data = bj)
+pp1 <- predict(m1, data.frame(time = dtp))
+
+plot(ave_pm ~ dtp, data = bj, cex = 0.3, type = "p")
+lines(pp1 ~ dtp, cex = 0.1, col = "darkgrey")
+lines(p2 ~ dtp, cex = 0.1, col = "blue")
+lines(p3 ~ dtp, cex = 0.1, col = "red")
+
+```
+
+#### Select df by using cross-validation
+
+```{r cache=TRUE, message=FALSE, warning=FALSE}
+possi.df <- seq(2, 20, 1)
+df.mse <- data.frame(possi.df, mse = NA)
+
+for(i in 1:100){
+  for(j in 1:length(possi.df)){
+    n <- nrow(bj)
+    train <- sample(n, floor(n * 0.9))
+    df <- possi.df[j]
+    
+    fit.for.df <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*df) +
+                  dow + holiday,
+                  family = quasipoisson(link = "log"),
+                  data = bj, subset = train,
+                  na.action = na.exclude,
+                  control = glm.control(epsilon = 10E-8, maxit = 10000))
+    
+    mse <- mean((bj$tot - predict(fit.for.df, newdata = bj, 
+                                           type = "response"))[-train]^2)
+    df.mse[j, 2] <- mse
+    
+    if(i == 1){
+      out <- df.mse
+    } else {
+      out <- rbind(out, df.mse)
+    }
+  }
+}
+
+# plot by original MSE
+plot.mse <- na.omit(out)
+ggplot(plot.mse, aes(x = possi.df, y = mse)) +
+       geom_point()
+
+# plot by average MSE
+library(dplyr)
+ave.mse <- group_by(out, possi.df) %>%
+            summarise(mean.mse = round(mean(mse, na.rm = TRUE), 2),
+                      sd = sd(mse, na.rm = TRUE))
+
+ave.mse <- as.data.frame(ave.mse)
+ggplot(ave.mse, aes(x = possi.df, y = mean.mse)) +
+  geom_point() +
+  geom_smooth() +
+  labs(x = "df per year", y = "MSE")
+```
+
+
+### Model assessment (linear vs. non-linear)
+
+#### Use k-fold cross-validation
+
+K = 10
+```{r cache=TRUE, message=FALSE, warning=FALSE}
+for(i in 1:200){
+ n <- nrow(bj)
+ train <- sample(n, floor(n * 0.9))
+ 
+ fit.lin <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) +
+                 dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj, subset = train,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+ mse.lin <- mean((bj$tot - predict(fit.lin, newdata = bj, type = "response"))[-train]^2)
+
+ fit.spl <- glm(tot ~ ns(pm01, knots = c(75, 150)) + ns(tmean,3) + ns(rh, 3) + 
+                          ns(time, 4*6) + dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj, subset = train,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+ mse.spl <- mean((bj$tot - predict(fit.spl, newdata = bj, type = "response"))[-train]^2)
+ out <- c(mse.lin, mse.spl)
+
+ if(i == 1){
+   error.10 <- out
+ } else {
+   error.10 <- rbind(error.10, out)
+   colnames(error.10) <- c("MSE.lin", "MSE.spl")
+ }
+}
+
+error.10 <- as.data.frame(error.10)
+mean(error.10$MSE.lin, na.rm = TRUE)
+mean(error.10$MSE.spl, na.rm = TRUE)
+
+hist(error.10$MSE.lin, breaks = seq(150, 450, 5), col = "red", ylim = c(0, 15), 
+     xlab = "MSE", main = "")
+hist(error.10$MSE.spl, breaks = seq(150, 450, 5), col = rgb(0, 1, 0, 0.5), add = T)
+text(400, 12, labels = "red-linear")
+text(400, 11, labels = "green-spline")
+```
+
+K = 20
+```{r echo=FALSE, cache=TRUE, message=FALSE, warning=FALSE}
+for(i in 1:200){
+ n <- nrow(bj)
+ train <- sample(n, floor(n * 0.95))
+ 
+ fit.lin <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) +
+                 dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj, subset = train,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+ mse.lin <- mean((bj$tot - predict(fit.lin, newdata = bj, type = "response"))[-train]^2)
+
+ fit.spl <- glm(tot ~ ns(pm01, knots = c(75, 150)) + ns(tmean,3) + ns(rh, 3) + 
+                          ns(time, 4*6) + dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj, subset = train,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+ mse.spl <- mean((bj$tot - predict(fit.spl, newdata = bj, type = "response"))[-train]^2)
+ out <- c(mse.lin, mse.spl)
+ 
+ if(i == 1){
+   error.20 <- out
+ } else {
+   error.20 <- rbind(error.20, out)
+   colnames(error.20) <- c("MSE.lin", "MSE.spl")
+ }
+}
+
+error.20 <- as.data.frame(error.20)
+mean(error.20$MSE.lin, na.rm = TRUE)
+mean(error.20$MSE.spl, na.rm = TRUE)
+
+hist(error.20$MSE.lin, breaks = 30, col = "red", ylim = c(0, 15), 
+     xlab = "MSE", main = "")
+hist(error.20$MSE.spl, breaks = 30, col = rgb(0, 1, 0, 0.5), add = T)
+text(400, 12, labels = "red-linear")
+text(400, 11, labels = "green-spline")
+```
+
+\
+Linear and non-linear models perform almost the same.
+
+#### Use QAIC
+```{r message=FALSE, warning=FALSE}
+lin.mod <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) +
+                 dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj, na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+
+spl.mod <- glm(tot ~ ns(pm01, knots = c(75, 150)) + ns(tmean,3) + ns(rh, 3) + 
+                          ns(time, 4*6) + dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj, na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+
+c(fqaic(lin.mod), fqaic(spl.mod))
+```
+
+### Subset method by classifing PM concentration
+
+```{r cache=TRUE}
+# re-order by pm
+bj.sub <- bj[order(bj$pm01), ]
+
+# Create 4 equally size categories
+bj.sub$pm.cate <- cut(seq(1, nrow(bj.sub)), breaks=4, labels=FALSE)
+bj.sub$pm.cate <- as.factor(bj.sub$pm.cate)
+
+ori.fit <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) +
+                 dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj.sub,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+
+# fit with pm.cate, ~ pm01 + pm.cate + pm01:pm.cate
+cat.fit <- glm(tot ~ pm01*pm.cate + ns(tmean,3) + ns(rh, 3) + 
+                 ns(time, 4*6) + dow + holiday,
+               family = quasipoisson(link = "log"),
+               data = bj.sub,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+
+anova(ori.fit, cat.fit, test = "F")
+```
+\
+Not significant, suggesting subset model might not be better than original model. Is that right?
+\
+```{r}
+summary(cat.fit)$coefficients[c(1:5, 43:45), ]
+```
+\
+Plot?
