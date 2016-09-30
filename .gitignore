@@ -5,4 +5,9 @@
 .R
 *.csv
 Plots/*
+Exposure_response_cache/*
+Exposure_response_files/*
 *.rds
+*.html
+*.png
+
