@@ -5,7 +5,7 @@ date: "July 18, 2016"
 output: pdf_document
 ---
 
-# AIC formula
+# AIC
 ```{r}
 # AIC = -2*loglikehood + k*(Number of parameters in the fitted model)
 
