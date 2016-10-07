@@ -6,7 +6,6 @@ output: html_document
 ---
 \
 Use all-cause mortality for the following analysis.
-\
 
 ### Packages Loading
 ```{r message=FALSE, warning=FALSE}
@@ -132,8 +131,197 @@ bj.cold$gr <- as.factor(bj.cold$gr)
 ```
 
 ### df selection
-#### data-driven method: choose df that minimizes the QAIC
+#### data-driven method: choose df that minimizes AIC/BIC
 **Functions**
+```{r message=FALSE, warning=FALSE}
+# GLM model
+fit <- function(data = c(), df=c()) {
+  mod <- glm(pm01 ~ ns(tmean,3) + ns(rh, 3) + ns(time, 4*df) +
+                 dow + holiday,
+               data = data,
+               na.action = na.exclude,
+               control = glm.control(epsilon = 10E-8, maxit = 10000))
+  
+  aic <- round(AIC(mod), 2)
+  bic <- round(BIC(mod), 2)
+  dev <- summary(mod)$deviance
+  
+  out <- c(model = mod, aic = aic, bic = bic, dev = dev)
+  return(out)
+}
+```
+
+```{r message=FALSE, warning=FALSE}
+Df <- seq(4, 15, 1)
+df_tab_1 <- data.frame(df = Df, AIC = NA, BIC = NA, Deviance = NA)
+for(i in 1:length(Df)){
+  fun <- fit(data = bj, df = Df[i])
+  df_tab_1[i, "AIC"] <- fun$aic
+  df_tab_1[i, "BIC"] <- fun$bic
+  df_tab_1[i, "Deviance"] <- fun$dev
+}
+
+kable(df_tab_1, align = "c")
+
+```
+
+\
+I would think 6, 7 or 8 df per year might be reasonable based on these criteria and previous knowledge.
+\
+From Roger's book, methods based on predicting the exposure variable include generialized cross-validation and AIC, while BIC is used over a set of models constructed to predict the outcome. It doesn't hurt to show both AIC and BIC here, but we need to think about what to show in the manuscript.
+
+### Model assessment (linear vs. non-linear)
+
+#### Use k-fold cross-validation
+**Use 6 df per year**
+```{r message=FALSE, warning=FALSE}
+library(caret)
+tc <- trainControl(method = "cv", number = 10)
+
+Lmod <- train(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+# 2 df for PM
+Smod2 <- train(tot ~ ns(pm01, df = 2) + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+# 3 df for PM
+Smod3 <- train(tot ~ ns(pm01, df = 3) + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+# 4 df for PM
+Smod4 <- train(tot ~ ns(pm01, df = 4) + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+
+com.1 <- data.frame(model = c("Linear", "Non-lin 2 df", "Non-lin 3 df", "Non-lin 4 df"), 
+                    RMSE = NA)
+com.1[, 2] <- c(Lmod$results[1, 2], Smod2$results[1, 2], 
+                Smod3$results[1, 2], Smod4$results[1, 2])
+kable(com.1, format = "markdown", align = "c")
+```
+
+\
+__RMSE: root mean squared error__
+
+\
+**Use 7 df per year**
+```{r echo=FALSE}
+tc <- trainControl(method = "cv", number = 10)
+
+Lmod <- train(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*7) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+# 2 df for PM
+Smod2 <- train(tot ~ ns(pm01, df = 2) + ns(tmean,3) + ns(rh, 3) + ns(time, 4*7) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+# 3 df for PM
+Smod3 <- train(tot ~ ns(pm01, df = 3) + ns(tmean,3) + ns(rh, 3) + ns(time, 4*7) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+# 4 df for PM
+Smod4 <- train(tot ~ ns(pm01, df = 4) + ns(tmean,3) + ns(rh, 3) + ns(time, 4*7) + dow + holiday, 
+                 data = bj, trControl = tc, method = "glm", 
+                 family = quasipoisson(link = "log"),
+                 na.action = na.exclude)
+
+com.2 <- data.frame(model = c("Linear", "Non-lin 2 df", "Non-lin 3 df", "Non-lin 4 df"), 
+                    RMSE = NA)
+com.2[, 2] <- c(Lmod$results[1, 2], Smod2$results[1, 2], 
+                Smod3$results[1, 2], Smod4$results[1, 2])
+kable(com.2, format = "markdown", align = "c")
+```
+
+\
+__1.Linear and non-linear models perform almost the same.__
+\
+__2.Now we have 3 df for PM, which is reasonable, I think.__
+
+##### Confirm by coding k-fold cross-validation
+```{r}
+#Randomly shuffle the data
+set.seed(1)
+Data <- bj
+Data <- Data[sample(nrow(Data)), ]
+
+#Create 10 equally size folds
+folds <- cut(seq(1, nrow(Data)), breaks=10, labels=FALSE)
+
+prediction.l <- data.frame()
+prediction.s2 <- data.frame()
+prediction.s3 <- data.frame()
+prediction.s4 <- data.frame()
+
+testDataCopy <- data.frame()
+
+#Perform 10 fold cross validation
+for(i in 1:10){
+  #Segement your data by fold using the which() function 
+  testIndexes <- which(folds == i, arr.ind = TRUE)
+  
+  testData <- Data[testIndexes, ]
+  trainData <- Data[-testIndexes, ]
+
+  fit.l <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) +  ns(time, 4*6) + dow + holiday,
+           family = quasipoisson(link = "log"),
+           data = trainData, na.action = na.exclude,
+           control = glm.control(epsilon = 10E-8, maxit = 10000))
+  # 2 df for pm
+  fit.s2 <- glm(tot ~ ns(pm01, 2) + ns(tmean,3) + ns(rh, 3) +  ns(time, 4*6) + dow + holiday,
+           family = quasipoisson(link = "log"),
+           data = trainData, na.action = na.exclude,
+           control = glm.control(epsilon = 10E-8, maxit = 10000))
+  # 3 df for pm
+  fit.s3 <- glm(tot ~ ns(pm01, 3) + ns(tmean,3) + ns(rh, 3) +  ns(time, 4*6) + dow + holiday,
+           family = quasipoisson(link = "log"),
+           data = trainData, na.action = na.exclude,
+           control = glm.control(epsilon = 10E-8, maxit = 10000))
+  # 4 df for pm
+  fit.s4 <- glm(tot ~ ns(pm01, 4) + ns(tmean,3) + ns(rh, 3) +  ns(time, 4*6) + dow + holiday,
+           family = quasipoisson(link = "log"),
+           data = trainData, na.action = na.exclude,
+           control = glm.control(epsilon = 10E-8, maxit = 10000))
+  
+  pred.l <- as.data.frame(predict(fit.l, newdata = testData, type = "response"))
+  prediction.l <- rbind(prediction.l, pred.l)
+  
+  pre.s2 <- as.data.frame(predict(fit.s2, newdata = testData, type = "response"))
+  prediction.s2 <- rbind(prediction.s2, pre.s2)
+  
+  pre.s3 <- as.data.frame(predict(fit.s3, newdata = testData, type = "response"))
+  prediction.s3 <- rbind(prediction.s3, pre.s3)
+
+  pre.s4 <- as.data.frame(predict(fit.s4, newdata = testData, type = "response"))
+  prediction.s4 <- rbind(prediction.s4, pre.s4)
+  
+  testDataCopy <- rbind(testDataCopy, as.data.frame(testData[, "tot"]))
+}
+
+result <- cbind(prediction.l, prediction.s2, prediction.s3, prediction.s4, testDataCopy)
+names(result) <- c("Predicted.l", "Predicted.s2", "Predicted.s3", "Predicted.s4", "Actual")
+head(result) # Take a look of it
+
+com.3 <- data.frame(model = c("Linear", "Non-lin 2 df", "Non-lin 3 df", "Non-lin 4 df"), 
+                    MSE = NA)
+
+com.3[1, 2] <- mean((result[, 5] - result[, 1])^2, na.rm = TRUE)
+com.3[2, 2] <- mean((result[, 5] - result[, 2])^2, na.rm = TRUE)
+com.3[3, 2] <- mean((result[, 5] - result[, 3])^2, na.rm = TRUE)
+com.3[4, 2] <- mean((result[, 5] - result[, 4])^2, na.rm = TRUE)
+com.3$RMSE <- sqrt(com.3$MSE)
+kable(com.3, format = "markdown", align = "c")
+```
+
+
+#### Use QAIC
 ```{r message=FALSE, warning=FALSE}
 # QAIC function
 fqaic <- function(model = c()) {
@@ -143,244 +331,6 @@ fqaic <- function(model = c()) {
   return(qaic)
 }
 
-# Extract relative risk
-get_rr <- function(model = c()){
-  log_coef <- summary(model)$coefficients[2, ]
-  coef <- log_coef[1] + c(0, -1, 1) * 1.96 * log_coef[2]
-  rr <- round((exp(coef*10) - 1)*100, 2)
-  grr <- paste0(rr[1], "(", rr[2], ",", rr[3], ")")
-  return(grr)
-}
-
-# GLM model
-fit <- function(data = c(), cause = "tot", df=c()) {
-  mod <- glm(data[, cause] ~ pm01 + ns(tmean,3) + 
-                 splines::ns(rh, 3) + ns(time, 4*df) +
-                 dow + holiday,
-               family = quasipoisson(link = "log"),
-               data = data,
-               na.action = na.exclude,
-               control = glm.control(epsilon = 10E-8,
-                                     maxit = 10000))
-  
-  aic <- round(fqaic(model = mod), 2)
-  
-  rr <- get_rr(model = mod)
-  out <- c(model = mod, aic = aic, rr = rr)
-  return(out)
-}
-```
-
-```{r message=FALSE, warning=FALSE}
-Df <- seq(4, 15, 1)
-Effects <- NA
-AIC <- NA
-df_choice_tab <- cbind(Df, Effects, AIC)
-for(i in 1:length(Df)){
-  fun <- fit(data = bj, df = Df[i])
-  df_choice_tab[i, "Effects"] <- fun$rr
-  df_choice_tab[i, "AIC"] <- fun$aic
-}
-kable(df_choice_tab, format = "markdown")
-```
-
-#### Choose df for time trend
-
-```{r eval=FALSE}
-bj$time <- 1:length(bj$date)
-dtp <- bj$date
-f1 <- glm(tot ~ ns(time, 2*4), family = quasipoisson, data = bj) # 2 df per year
-p1 <- predict(f1, data.frame(time = dtp), type = "response")
-
-f2 <- glm(tot ~ ns(time, 5*4), family = quasipoisson, data = bj) # 4 df
-p2 <- predict(f2, data.frame(time = dtp), type = "response")
-
-f3 <- glm(tot ~ ns(time, 6*4), family = quasipoisson, data = bj) # 4 df
-p3 <- predict(f3, data.frame(time = dtp), type = "response")
-
-f4 <- glm(tot ~ ns(time, 10*4), family = quasipoisson, data = bj) # 10 df
-p4 <- predict(f4, data.frame(time = dtp), type = "response")
-
-
-plot(tot ~ date, data = bj, cex = 0.3, type = "p")
-lines(p1 ~ dtp, cex = 0.1, col = "darkgrey")
-lines(p2 ~ dtp, cex = 0.1, col = "blue")
-lines(p3 ~ dtp, cex = 0.1, col = "red")
-```
-
-```{r eval=FALSE}
-bj$time <- 1:length(bj$date)
-dtp <- bj$date
-f1 <- glm(tot ~ ns(time, 2*4), family = quasipoisson, data = bj) # 2 df per year
-p1 <- predict(f1, data.frame(time = dtp), type = "response")
-
-f2 <- glm(tot ~ ns(time, 5*4), family = quasipoisson, data = bj) # 4 df
-p2 <- predict(f2, data.frame(time = dtp), type = "response")
-
-f3 <- glm(tot ~ ns(time, 6*4), family = quasipoisson, data = bj) # 4 df
-p3 <- predict(f3, data.frame(time = dtp), type = "response")
-
-f4 <- glm(tot ~ ns(time, 10*4), family = quasipoisson, data = bj) # 10 df
-p4 <- predict(f4, data.frame(time = dtp), type = "response")
-
-
-plot(tot ~ date, data = bj, cex = 0.3, type = "p")
-lines(p1 ~ dtp, cex = 0.1, col = "darkgrey")
-lines(p2 ~ dtp, cex = 0.1, col = "blue")
-lines(p3 ~ dtp, cex = 0.1, col = "red")
-m1 <- glm(ave_pm ~ ns(time, 12*4), data = bj)
-pp1 <- predict(m1, data.frame(time = dtp))
-
-plot(ave_pm ~ dtp, data = bj, cex = 0.3, type = "p")
-lines(pp1 ~ dtp, cex = 0.1, col = "darkgrey")
-lines(p2 ~ dtp, cex = 0.1, col = "blue")
-lines(p3 ~ dtp, cex = 0.1, col = "red")
-
-```
-
-#### Select df by using cross-validation
-
-```{r cache=TRUE, message=FALSE, warning=FALSE}
-possi.df <- seq(2, 20, 1)
-df.mse <- data.frame(possi.df, mse = NA)
-
-for(i in 1:100){
-  for(j in 1:length(possi.df)){
-    n <- nrow(bj)
-    train <- sample(n, floor(n * 0.9))
-    df <- possi.df[j]
-    
-    fit.for.df <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*df) +
-                  dow + holiday,
-                  family = quasipoisson(link = "log"),
-                  data = bj, subset = train,
-                  na.action = na.exclude,
-                  control = glm.control(epsilon = 10E-8, maxit = 10000))
-    
-    mse <- mean((bj$tot - predict(fit.for.df, newdata = bj, 
-                                           type = "response"))[-train]^2)
-    df.mse[j, 2] <- mse
-    
-    if(i == 1){
-      out <- df.mse
-    } else {
-      out <- rbind(out, df.mse)
-    }
-  }
-}
-
-# plot by original MSE
-plot.mse <- na.omit(out)
-ggplot(plot.mse, aes(x = possi.df, y = mse)) +
-       geom_point()
-
-# plot by average MSE
-library(dplyr)
-ave.mse <- group_by(out, possi.df) %>%
-            summarise(mean.mse = round(mean(mse, na.rm = TRUE), 2),
-                      sd = sd(mse, na.rm = TRUE))
-
-ave.mse <- as.data.frame(ave.mse)
-ggplot(ave.mse, aes(x = possi.df, y = mean.mse)) +
-  geom_point() +
-  geom_smooth() +
-  labs(x = "df per year", y = "MSE")
-```
-
-
-### Model assessment (linear vs. non-linear)
-
-#### Use k-fold cross-validation
-
-K = 10
-```{r cache=TRUE, message=FALSE, warning=FALSE}
-for(i in 1:200){
- n <- nrow(bj)
- train <- sample(n, floor(n * 0.9))
- 
- fit.lin <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) +
-                 dow + holiday,
-               family = quasipoisson(link = "log"),
-               data = bj, subset = train,
-               na.action = na.exclude,
-               control = glm.control(epsilon = 10E-8, maxit = 10000))
- mse.lin <- mean((bj$tot - predict(fit.lin, newdata = bj, type = "response"))[-train]^2)
-
- fit.spl <- glm(tot ~ ns(pm01, knots = c(75, 150)) + ns(tmean,3) + ns(rh, 3) + 
-                          ns(time, 4*6) + dow + holiday,
-               family = quasipoisson(link = "log"),
-               data = bj, subset = train,
-               na.action = na.exclude,
-               control = glm.control(epsilon = 10E-8, maxit = 10000))
- mse.spl <- mean((bj$tot - predict(fit.spl, newdata = bj, type = "response"))[-train]^2)
- out <- c(mse.lin, mse.spl)
-
- if(i == 1){
-   error.10 <- out
- } else {
-   error.10 <- rbind(error.10, out)
-   colnames(error.10) <- c("MSE.lin", "MSE.spl")
- }
-}
-
-error.10 <- as.data.frame(error.10)
-mean(error.10$MSE.lin, na.rm = TRUE)
-mean(error.10$MSE.spl, na.rm = TRUE)
-
-hist(error.10$MSE.lin, breaks = seq(150, 450, 5), col = "red", ylim = c(0, 15), 
-     xlab = "MSE", main = "")
-hist(error.10$MSE.spl, breaks = seq(150, 450, 5), col = rgb(0, 1, 0, 0.5), add = T)
-text(400, 12, labels = "red-linear")
-text(400, 11, labels = "green-spline")
-```
-
-K = 20
-```{r echo=FALSE, cache=TRUE, message=FALSE, warning=FALSE}
-for(i in 1:200){
- n <- nrow(bj)
- train <- sample(n, floor(n * 0.95))
- 
- fit.lin <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) +
-                 dow + holiday,
-               family = quasipoisson(link = "log"),
-               data = bj, subset = train,
-               na.action = na.exclude,
-               control = glm.control(epsilon = 10E-8, maxit = 10000))
- mse.lin <- mean((bj$tot - predict(fit.lin, newdata = bj, type = "response"))[-train]^2)
-
- fit.spl <- glm(tot ~ ns(pm01, knots = c(75, 150)) + ns(tmean,3) + ns(rh, 3) + 
-                          ns(time, 4*6) + dow + holiday,
-               family = quasipoisson(link = "log"),
-               data = bj, subset = train,
-               na.action = na.exclude,
-               control = glm.control(epsilon = 10E-8, maxit = 10000))
- mse.spl <- mean((bj$tot - predict(fit.spl, newdata = bj, type = "response"))[-train]^2)
- out <- c(mse.lin, mse.spl)
- 
- if(i == 1){
-   error.20 <- out
- } else {
-   error.20 <- rbind(error.20, out)
-   colnames(error.20) <- c("MSE.lin", "MSE.spl")
- }
-}
-
-error.20 <- as.data.frame(error.20)
-mean(error.20$MSE.lin, na.rm = TRUE)
-mean(error.20$MSE.spl, na.rm = TRUE)
-
-hist(error.20$MSE.lin, breaks = 30, col = "red", ylim = c(0, 15), 
-     xlab = "MSE", main = "")
-hist(error.20$MSE.spl, breaks = 30, col = rgb(0, 1, 0, 0.5), add = T)
-text(400, 12, labels = "red-linear")
-text(400, 11, labels = "green-spline")
-```
-
-\
-Linear and non-linear models perform almost the same.
-
-#### Use QAIC
-```{r message=FALSE, warning=FALSE}
 lin.mod <- glm(tot ~ pm01 + ns(tmean,3) + ns(rh, 3) + ns(time, 4*6) +
                  dow + holiday,
                family = quasipoisson(link = "log"),
@@ -395,6 +345,8 @@ spl.mod <- glm(tot ~ ns(pm01, knots = c(75, 150)) + ns(tmean,3) + ns(rh, 3) +
 
 c(fqaic(lin.mod), fqaic(spl.mod))
 ```
+\
+__Samle conclusion, linear ane non-linear perform pretty similar.__
 
 ### Subset method by classifing PM concentration
 
@@ -425,9 +377,29 @@ anova(ori.fit, cat.fit, test = "F")
 ```
 \
 Not significant, suggesting subset model might not be better than original model. Is that right?
-\
-```{r}
-summary(cat.fit)$coefficients[c(1:5, 43:45), ]
+
+#### Extract and plot effects of PM in each catetory
+
+__I am wondering whether we could get the effect of PM in each PM category from the fitted values. But I have no idea how to calculate__
+```{r eval=FALSE}
+fitted.death <- round(predict(cat.fit, newdata = bj.sub, type = "response"), 0)
+actual.death <- bj.sub$tot
+pm.category <- bj.sub$pm.cate
+  
+dat <- data.frame(cbind(actual.death, fitted.death, pm.category))
 ```
-\
-Plot?
+
+__Also tried to get from the summary of model, but seems an odd results. Not sure if it's correct__
+```{r}
+sum.coef <- summary(cat.fit)$coefficients
+sum.coef[c(2:5, 43:45), ]
+
+sub.tab <- data.frame(pm_category = c("C1", "C2", "C3", "C4"), Coef = NA)
+sub.tab[1, 2] <- sum.coef[2, 1]
+sub.tab[2, 2] <- sum.coef[2, 1] + sum.coef[43, 1]
+sub.tab[3, 2] <- sum.coef[2, 1] + sum.coef[44, 1]
+sub.tab[4, 2] <- sum.coef[2, 1] + sum.coef[45, 1]
+kable(sub.tab, align = "c")
+```
+
+
